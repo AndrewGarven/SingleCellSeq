@@ -1,4 +1,4 @@
-# Project Name: Single Cell Sequencing Data Analysis with Scanpy
+# Single Cell Sequencing Data Analysis with Scanpy
 
 ## Table of Contents
 
