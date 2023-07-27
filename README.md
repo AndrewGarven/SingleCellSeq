@@ -51,7 +51,7 @@ This spread sheet contains an abundance of information regarding all data sample
 
 ** Note: please read all the documentation and attached publications to verify the data is as you expect it. If it is we can begin to download all of the samples contained within the selected `"BioProject"`. To do so, I like to download a RunInfo table similar our previously generated `esearch` table above; however, this table will only contain information from our selected `"BioProject"` this can be done by running the following (Replacing `<BioProject>` with your selected Bioproject ID): 
 
-`esearch -db sra -query <BioProject>  | efetch --format runinfo > runinfo.txt`
+`esearch -db sra -query <BioProject>  | efetch --format runinfo > runinfo.csv`
 
 When I run this script for my BioProject `PRJNA558456` I get the following **runinfo.txt** file: 
 
@@ -61,16 +61,31 @@ As seen [here](https://www.biostars.org/p/359441/#360008) using this runinfo fil
 
 to download the SRA toolkit please follow the appropriate instructions [here](https://github.com/ncbi/sra-tools/wiki/02.-Installing-SRA-Toolkit)
 
-Once downloaded you can 'bulk download' all fastq files from the bioproject of interest using the following command: (please change `<number of samples>` and `<path to runinfo.txt>` to match your data download)
+Once downloaded you will need to configure your SRA toolkit using the following command 
+
+`vdb-config -i`
+
+this will open an interactive screen you can navigate with your arrow keys and enter.
+
+![vdb-config](images/vdb-config.png)
+
+navigate to `Cache` tab and input a path to an empty directory that will accept all the fastq files from your selected BioProject. In my case, this path is:  `lustre06/project/6065374/garvena/singlecellseq/Data/InputData/Lai`
+
+![vdb-config-path](images/vdb-config-path.png)
+
+
+Once SRA-toolkit is configured you can 'bulk download' all fastq files from the bioproject of interest using the following command: (please change `<number of samples>` and `<path to runinfo.txt>` to match your data download)
 
 
 ```bash
 #!/bin/bash
 
-parallel --verbose -j <number of samples> prefetch {} ::: $(cut -f1 <path to runinfo.txt>) >>sra_download.log
-wait
-parallel --verbose -j <number of samples> fastq-dump --split-files {} ::: $(cut -f1 <path to runinfo.txt>) >>sra_dump.log
-wait
+module load sra-toolkit/3.0.0
 
+parallel --verbose -j 8 prefetch --max-size 35G {} ::: $(tail -n +2 /home/garvena/projects/def-dmberman/garvena/singlecellseq/Data/InputData/test/runinfo.csv | cut -d ',' -f1) >> sra_download.log
+wait
+parallel --verbose -j 8 fastq-dump --split-files {} ::: $(tail -n +2 /home/garvena/projects/def-dmberman/garvena/singlecellseq/Data/InputData/test/runinfo.csv | cut -d ',' -f1) >> sra_dump.log
+wait
 exit
 ```
+
