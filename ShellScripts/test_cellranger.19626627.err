@@ -1,0 +1,4 @@
+/var/spool/slurmd/job19626627/slurm_script: line 22: d: command not found
+error: Invalid value "" for '--id <ID>': must contain only letters, digits, underscores, and dashes.
+
+For more information try --help
