@@ -14,6 +14,8 @@ This work is largely based on work done by Dr. Hamid Ghaedi [here](https://githu
 
 ## Libraries
 
+- [Entrez Direct](https://www.ncbi.nlm.nih.gov/books/NBK179288/)
+- [SRA Toolkit](https://github.com/ncbi/sra-tools/wiki)
 - [Fastqc](https://www.bioinformatics.babraham.ac.uk/projects/fastqc/) 
 - [Cell Ranger](https://support.10xgenomics.com/single-cell-gene-expression/software/pipelines/latest/using/tutorial_ov)
 
