@@ -301,6 +301,8 @@ Single-cell sequencing assays produce a significant amount of background noise c
 ### Download CellBender
 CellBender is most easily downloaded as a docker image as this will automatically download all dependancies. Thankfully, CellBender is available from the Google Container Repository. This can be downloaded via any process capable of pulling docker images; for this I will use apptainer:
 
+***note: this is pulling the latest cellbender docker image (August 2023) and therefore will likely in the future
+
 ```bash
 module load apptainer
 apptainer pull cellbender.sif docker://us.gcr.io/broad-dsde-methods/cellbender:latest 
@@ -308,3 +310,41 @@ apptainer pull cellbender.sif docker://us.gcr.io/broad-dsde-methods/cellbender:l
 
 ### Run remove-background
 
+Remove background attempts to remove RNA reads stemming from the 'ambient plateau'. this plateau simply refers to the section of the counts-per-droplets VS. Droplet ID ranked by count plot (examples below) where the 'cells' seem to exibit significantly less RNA reads. This isnt always a low amount (see exibit B: high background); however, it should be a signifcant decrease in expression campared to other cells in the plot. this section of the plot represents what is not likely to be a cell, but instead a droplet containing a significant amount of RNA fragments. Again, if the top left portion of this plot represents a probability of being a cell, then the 'plateau' section of this graph is highly unlikely to be a true cell count as its expression is too greatly reduced and therefore likely represents an artifact. 
+
+![ambientplateau](images/ambientplateau.png)
+
+
+![cellbenderhigh-low](images/cellbenderhigh-low.png)
+
+properly interpreting these graphs is extremely important for maximising the utility of cellbender as the `remove-background` function requires setting an `expected-cells` and `total-droplets included` values. 
+
+Thankfully `cellranger` provides a UMI-curve as an output from within the `web_summary.html` output file. This file provides a bunch of useful information including an estimated cell count, mean reads per cell. For our purposes we simply need `Estimated Number of Cells` and a rough estimate of the middle of the `ambient plateau` these values will represent `expected-cells` and `total-droplets included values` for cellbender. For example, in the sample provided below I would set these values to ~8k and ~15K, repectively. please note that we will be running cellbender in a for loop, so we will need a rough average values for all your samples (round up)!
+
+![web_summary](images/web_sum.png)
+
+to run cellbender from the docker image you will need to run `module load apptainer` than make use of the exec function to execute cellbender. please adjust the `<path/to/cellranger/*.h5>` and `<path/to/cellbender/output.h5>` to the appropriate directories. In addition, please adjust `expected-cells` and `total-droplets-included` as described above. please note: the `--cuda` tag allows cellbender to utilize a GPU which signifcantly reduces the time it takes to run this opperation. if you do not have access to a GPU, please remove this tag. 
+
+```bash
+module load apptainer 
+
+# Set the root directory where the subdirectories with raw_feature_bc_matrix.h5 files are located
+input_directory="<path/to/cellranger/*.h5>"
+output_directory="<path/to/cellbender/output.h5>"
+# Iterate through each subdirectory and process the raw_feature_bc_matrix.h5 file
+for subdir in "$input_directory"/*; do
+  # Check if the raw_feature_bc_matrix.h5 file exists in the current subdirectory
+  if [ -f "$subdir/outs/raw_feature_bc_matrix.h5" ]; then
+    sample=$(basename "$subdir")
+    # Process the raw_feature_bc_matrix.h5 file in the current subdirectory
+    apptainer exec cellbender.sif cellbender remove-background \
+                                  --input $subdir/raw_feature_bc_matrix.h5 \
+                                  --output $output_directory/$sample.h5 \
+                                  --cuda \
+                                  --expected-cells 8000 \
+                                  --total-droplets-included 20000 \
+                                  --fpr 0.01 \
+                                  --epochs 150
+  fi
+done
+```
