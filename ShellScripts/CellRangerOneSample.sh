@@ -10,7 +10,7 @@
 ###   Consult with your cluster administrators to find the combination that
 ###   works best for single-node, multi-threaded applications on your system.
 #SBATCH --mem=250G
-#SBATCH --time 02:00:00
+#SBATCH --time 05:00:00
 #SBATCH --output=/home/garvena/projects/def-dmberman/garvena/singlecellseq/SlurmOut/test_cellranger.%J.out
 #SBATCH --error=/home/garvena/projects/def-dmberman/garvena/singlecellseq/SlurmOut/test_cellranger.%J.err
 #SBATCH --mail-type=ALL
@@ -19,9 +19,7 @@
 
 cd /home/garvena/projects/def-dmberman/garvena/singlecellseq/Data/CellRanger/Lai
 
-d = '/home/garvena/projects/def-dmberman/garvena/singlecellseq/Data/InputData/Lai/SRR9897622/'
-
-cellranger count --id=$(basename "$d") \
+cellranger count --id=SRR9897622 \
                  --transcriptome=/home/garvena/projects/def-dmberman/garvena/singlecellseq/Data/genome-ref/refdata-gex-GRCh38-2020-A \
-                 --fastqs=$d \
+                 --fastqs=/home/garvena/projects/def-dmberman/garvena/singlecellseq/Data/InputData/Lai/SRR9897622 \
                  --chemistry=SC3Pv2

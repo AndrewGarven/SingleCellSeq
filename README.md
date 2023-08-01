@@ -9,6 +9,8 @@
 5. [Quality Control: FastQC](#fastqc)
 6. [Read Processing and Alignment: CellRanger](#read-processing-and-alignment-cellranger)
 7. [Technical Artifact Removal: CellBender](#technical-artifact-removal-cellbender)
+8. [Loading Single-Cell RNA-seq Count Data: Scanpy](#loading-single-cell-rna-seq-count-data-scanpy)
+9. [Pre-Processing Single-Cell RNA-seq Count Data: Scanpy](#pre-processing-single-cell-rna-seq-count-data-scanpy)
 
 ## Description and Acknowledgements
 
@@ -24,6 +26,7 @@ This work is largely based on work done by Dr. Hamid Ghaedi [here](https://githu
 - [Cell Ranger](https://support.10xgenomics.com/single-cell-gene-expression/software/pipelines/latest/using/tutorial_ov)
 - [Apptainer](https://apptainer.org/docs/user/main/docker_and_oci.html)
 - [Docker](https://www.docker.com/)
+- [CellBender](https://cellbender.readthedocs.io/en/latest/)
 ## Finding Public Data
 
 The Sequence Read Archive ([SRA](https://www.ncbi.nlm.nih.gov/sra)) is a publically accessible database maintained by the National Center for Biotechnology Information ([NCBI](https://www.ncbi.nlm.nih.gov)) containing vast archives of bioinformatic sequencing data. As such, it is a great place to start looking for publically available sequencing data that may be useful to answer your research question. In my case, I would like to find a **single-cell sequencing** dataset of **human bladder cancer samples**.  
@@ -87,9 +90,7 @@ Once SRA-toolkit is configured you can 'bulk download' all fastq files from the 
 
 module load sra-toolkit/3.0.0
 
-parallel --verbose -j 8 prefetch --max-size 35G {} ::: $(tail -n +2 /home/garvena/projects/def-dmberman/garvena/singlecellseq/Data/InputData/test/runinfo.csv | cut -d ',' -f1) >> sra_download.log
-wait
-parallel --verbose -j 8 fastq-dump --split-files {} ::: $(tail -n +2 /home/garvena/projects/def-dmberman/garvena/singlecellseq/Data/InputData/test/runinfo.csv | cut -d ',' -f1) >> sra_dump.log
+parallel --verbose -j 8 curl {} ::: $(tail -n +2 /home/garvena/projects/def-dmberman/garvena/singlecellseq/Data/InputData/test/runinfo.csv | cut -d ',' -f10) >> sra_dump.log
 wait
 exit
 ```
@@ -323,28 +324,82 @@ Thankfully `cellranger` provides a UMI-curve as an output from within the `web_s
 
 ![web_summary](images/web_sum.png)
 
-to run cellbender from the docker image you will need to run `module load apptainer` than make use of the exec function to execute cellbender. please adjust the `<path/to/cellranger/*.h5>` and `<path/to/cellbender/output.h5>` to the appropriate directories. In addition, please adjust `expected-cells` and `total-droplets-included` as described above. please note: the `--cuda` tag allows cellbender to utilize a GPU which signifcantly reduces the time it takes to run this opperation. if you do not have access to a GPU, please remove this tag. 
+to run cellbender from the docker image you will need to run `module load apptainer` then make use of the exec function to execute cellbender. please adjust the `<path/to/cellranger/*.h5>` and `<path/to/cellbender/output.h5>` to the appropriate directories. In addition, please adjust `expected-cells` and `total-droplets-included` as described above. please note: the `--cuda` tag allows cellbender to utilize a GPU which signifcantly reduces the time it takes to run this opperation. if you do not have access to a GPU, please remove this tag. 
+
+***Note: you must use the apptainer --bind tag to access filepaths outside of the docker image (this would include all data for processing)
 
 ```bash
 module load apptainer 
 
 # Set the root directory where the subdirectories with raw_feature_bc_matrix.h5 files are located
-input_directory="<path/to/cellranger/*.h5>"
-output_directory="<path/to/cellbender/output.h5>"
+input_directory="<path/to/input/data/directory>"
+output_directory="<path/to/desired/output/directory>"
+
 # Iterate through each subdirectory and process the raw_feature_bc_matrix.h5 file
 for subdir in "$input_directory"/*; do
   # Check if the raw_feature_bc_matrix.h5 file exists in the current subdirectory
   if [ -f "$subdir/outs/raw_feature_bc_matrix.h5" ]; then
     sample=$(basename "$subdir")
+    
     # Process the raw_feature_bc_matrix.h5 file in the current subdirectory
-    apptainer exec cellbender.sif cellbender remove-background \
-                                  --input $subdir/raw_feature_bc_matrix.h5 \
-                                  --output $output_directory/$sample.h5 \
-                                  --cuda \
-                                  --expected-cells 8000 \
-                                  --total-droplets-included 20000 \
-                                  --fpr 0.01 \
-                                  --epochs 150
+    apptainer exec -C -W ${SLURM_TMPDIR} --nv \
+      --bind "$input_directory":"/mnt/input" \
+      --bind "$output_directory":"/mnt/output" \
+      cellbender.sif cellbender remove-background \
+      --input "/mnt/input/$(basename "$subdir")/outs/raw_feature_bc_matrix.h5" \
+      --output "/mnt/output/$sample.h5" \
+      --cuda \
+      --expected-cells 8000 \
+      --total-droplets-included 20000 \
+      --fpr 0.01 \
+      --epochs 150
   fi
 done
 ```
+
+CellBender has a variety of inputs for each sample including '<sample_name>_filtered.h5' which will be utilized in downstream analyses. Before proceeding please investigate the '<sample_name>.pdf' document as this contains much of the quality control outputs. Most important of which is the UMI plot from above with the overlayed prediction made by the CellBinder software. Please variefy that the cells removed from your downstream analysis (show a low probability of being a cell) seems reasonable to you. An example from my dataset is shown below. 
+
+![cellbenderpredict](images/cellbenderpredict.png)
+
+## Loading Single-Cell RNA-seq Count Data: Scanpy
+
+[Scanpy](https://github.com/scverse/scanpy) (as noted by there team) is a scalable toolkit for analyzing single-cell gene expression data. It includes methods for preprocessing, visualization, clustering, pseudotime and trajectory inference, differential expression testing, and simulation of gene regulatory networks. Its Python-based implementation efficiently deals with data sets of more than one million cells. 
+
+As this data is highly interactive, requiring multiple intermediate steps I highly recommend use of a jupyter-notebook (a working example of which can be found at */PythonScripts/main.ipynb)
+
+This may not accurately represent all required dependancies (will update as I go)
+```python 
+import scanpy as sc
+import anndata as ad
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+import multiprocessing as mp
+import scipy.stats as stats
+from glob import glob
+```
+
+Scanpy has weird default values that are often immediately changed by convention. The first is that scanpy by default will only show warning+error messages. We would like to change this as it also offers 'Hints' if you set verbosity to 3.
+
+```python
+sc.settings.verbosity = 3
+```
+Here we are simply iterating through all of the '*/outs/filtered_feature_bc_matrix' directories and importing the single cell dataset into a scanpy object. 
+
+1. I generate a list of directory paths to cellranger output directories
+2. I generate a dictionary containing anndata objects with sample_name as  `keys`
+3. I concatinate these anndata objects into a single dataset 
+4. I ensure that all the obs and var are unique
+
+*** setting cache=True will significantly speed up reloading these objects a second time and will generate additional `.h5ad` files in the directory where this code is executed. 
+
+```python
+dirpaths = glob('<path/to/cellranger/output>/*/outs/filtered_feature_bc_matrix')
+adatas = {dirpath.split('/')[10]: sc.read_10x_mtx(dirpath, var_names='gene_symbols', cache=True) for dirpath in dirpaths}
+adata = ad.concat(adatas, label='sample')
+adata.obs_names_make_unique
+adata.var_names_make_unique
+```
+
+## Pre-Processing Single-Cell RNA-seq Count Data: Scanpy 
