@@ -10,6 +10,7 @@
 6. [Read Processing and Alignment: CellRanger](#read-processing-and-alignment-cellranger)
 7. [Technical Artifact Removal: CellBender](#technical-artifact-removal-cellbender)
 8. [Loading Single-Cell RNA-seq Count Data: Scanpy](#loading-single-cell-rna-seq-count-data-scanpy)
+9. [Doublet Prediction: scvi](#doublet-prediction-scvi)
 9. [Pre-Processing Single-Cell RNA-seq Count Data: Scanpy](#pre-processing-single-cell-rna-seq-count-data-scanpy)
 
 ## Description and Acknowledgements
@@ -389,17 +390,33 @@ Here we are simply iterating through all of the '*/outs/filtered_feature_bc_matr
 
 1. I generate a list of directory paths to cellranger output directories
 2. I generate a dictionary containing anndata objects with sample_name as  `keys`
-3. I concatinate these anndata objects into a single dataset 
-4. I ensure that all the obs and var are unique
 
 *** setting cache=True will significantly speed up reloading these objects a second time and will generate additional `.h5ad` files in the directory where this code is executed. 
 
 ```python
 dirpaths = glob('<path/to/cellranger/output>/*/outs/filtered_feature_bc_matrix')
 adatas = {dirpath.split('/')[10]: sc.read_10x_mtx(dirpath, var_names='gene_symbols', cache=True) for dirpath in dirpaths}
+```
+## Doublet Prediction: scvi
+
+
+## Pre-Processing Single-Cell RNA-seq Count Data: Scanpy
+
+
+making an integrated anndata object containing all samples
+
+```python
 adata = ad.concat(adatas, label='sample')
 adata.obs_names_make_unique
 adata.var_names_make_unique
 ```
 
-## Pre-Processing Single-Cell RNA-seq Count Data: Scanpy 
+A common first pre-processing step is to evaluate top gene expression in your samples, to ensure they align with what you would expect within your samples. It is often difficult to see these distributions because they are heavily right skewed so I like to include the `log=True` tag to show log transformed data. please note the x-axis is log transformed (as displayed below).
+
+```python
+sc.pl.highest_expr_genes(adata, n_top=20, show=True, log=True)
+```
+
+
+![preprocess-topgene](images/preprocess-top-gene.png)
+
