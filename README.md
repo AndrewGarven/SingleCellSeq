@@ -9,9 +9,14 @@
 5. [Quality Control: FastQC](#fastqc)
 6. [Read Processing and Alignment: CellRanger](#read-processing-and-alignment-cellranger)
 7. [Technical Artifact Removal: CellBender](#technical-artifact-removal-cellbender)
-8. [Loading Single-Cell RNA-seq Count Data: Scanpy](#loading-single-cell-rna-seq-count-data-scanpy)
-9. [Doublet Prediction: scvi](#doublet-prediction-scvi)
-9. [Pre-Processing Single-Cell RNA-seq Count Data: Scanpy](#pre-processing-single-cell-rna-seq-count-data-scanpy)
+8. [Scanpy Single-Cell Sequencing](#scanpy-single-cell-sequencing)
+9. [Scanpy Loading Single-Cell RNA-seq Count Data](#loading-single-cell-rna-seq-count-data-scanpy)
+10. [Scanpy Pre-Processing Single-Cell RNA-seq Count Data](#pre-processing-single-cell-rna-seq-count-data-scanpy)
+11. [Scrublet Doublet Prediction](#doublet-prediction-scrublet)
+12. [Normalization](#normalization)
+13. [Dimensional Reduction](#dimensional-reduction)
+14. [PCA analysis](#principle-component-analysis)
+15. [Harmony Dataset Integration](#harmony-dataset-integration)
 
 ## Description and Acknowledgements
 
@@ -362,7 +367,9 @@ CellBender has a variety of inputs for each sample including '<sample_name>_filt
 
 ![cellbenderpredict](images/cellbenderpredict.png)
 
-## Loading Single-Cell RNA-seq Count Data: Scanpy
+## Scanpy Single-Cell Sequencing
+
+### Loading Single-Cell RNA-seq Count Data: Scanpy
 
 [Scanpy](https://github.com/scverse/scanpy) (as noted by there team) is a scalable toolkit for analyzing single-cell gene expression data. It includes methods for preprocessing, visualization, clustering, pseudotime and trajectory inference, differential expression testing, and simulation of gene regulatory networks. Its Python-based implementation efficiently deals with data sets of more than one million cells. 
 
@@ -372,13 +379,8 @@ This may not accurately represent all required dependancies (will update as I go
 ```python 
 import scanpy as sc
 import anndata as ad
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-import multiprocessing as mp
-import scipy.stats as stats
 from glob import glob
+import matplotlib.pyplot as plt
 ```
 
 Scanpy has weird default values that are often immediately changed by convention. The first is that scanpy by default will only show warning+error messages. We would like to change this as it also offers 'Hints' if you set verbosity to 3.
@@ -394,14 +396,13 @@ Here we are simply iterating through all of the '*/outs/filtered_feature_bc_matr
 *** setting cache=True will significantly speed up reloading these objects a second time and will generate additional `.h5ad` files in the directory where this code is executed. 
 
 ```python
-dirpaths = glob('<path/to/cellranger/output>/*/outs/filtered_feature_bc_matrix')
-adatas = {dirpath.split('/')[10]: sc.read_10x_mtx(dirpath, var_names='gene_symbols', cache=True) for dirpath in dirpaths}
+dirpaths = glob('path/to/cellbender/h5/files/*_filtered.h5')
+
+adatas = {dirpath.split('/')[10].split('_')[0]: sc.read_h5ad(dirpath, cache=True) for dirpath in dirpaths}
+adata = ad.concat(adatas.values(), label='sample')
 ```
-## Doublet Prediction: scvi
 
-
-## Pre-Processing Single-Cell RNA-seq Count Data: Scanpy
-
+### Pre-Processing Single-Cell RNA-seq Count Data: Scanpy
 
 making an integrated anndata object containing all samples
 
@@ -417,6 +418,269 @@ A common first pre-processing step is to evaluate top gene expression in your sa
 sc.pl.highest_expr_genes(adata, n_top=20, show=True, log=True)
 ```
 
-
 ![preprocess-topgene](images/preprocess-top-gene.png)
 
+Additionally, we should consider the distribution of genes per cell, and the number of cells that express a specific gene. This will be done for each sample within our dataset individually. 
+
+```python
+
+for adata in adatas.values():
+    sc.pp.filter_cells(adata, min_genes=0)
+    gene_counts_per_cell = adata.obs['n_genes']
+    sc.pp.filter_genes(adata, min_cells=0)
+    cell_counts_per_gene = adata.var['n_cells']
+    
+    plt.figure(figsize=(10, 4))
+    plt.subplot(1, 2, 1)
+    plt.hist(gene_counts_per_cell, bins=50)
+    plt.xlabel('Number of Genes per Cell')
+    plt.ylabel('Frequency')
+    
+    plt.subplot(1, 2, 2)
+    plt.hist(cell_counts_per_gene, bins=50)
+    plt.xlabel('Number of Cells per Gene')
+    plt.ylabel('Frequency')
+    
+    plt.tight_layout()
+    plt.show()
+
+```
+This should output a distribution for each sample like so: 
+
+![gene-cell-distribution](images/genecelldis.png)
+
+You will notice that a significant proportion of the cells captured in your sample, have very few genes. What are these? Do these populations represent a 'true' cell within your sample? likely not! These 'cells' are more likely to be captured mitochondria, ribosomes, or hemaglobin which are likely not of interest. As such, we should assess the mitochondrial, ribosomal, and hemoglobin based gene signatures in each of our computed cells, and eliminate all 'cells' that seem to express a significant fraction of these genes. To do so, we can leverage gene naming convention, and label cells with extremely high rates of transcrition of these genes. Mitochondrial genes all start with `'MT'`, Ribosomal genes all start with `'RPS'` or `'RPL'` and Hemoglobin genes all start with `'^HB[^(P)]'`.
+
+```python
+adata.var["mt"] = adata.var_names.str.startswith("MT-")
+adata.var["ribo"] = adata.var_names.str.startswith(("RPS", "RPL"))
+adata.var["hb"] = adata.var_names.str.contains("^HB[^(P)]")
+```
+Now that we have isolated these gene sets, we can compute quality control metrics using [calculate_qc_metrics](https://scanpy.readthedocs.io/en/latest/generated/scanpy.pp.calculate_qc_metrics.html) like so: 
+
+```python
+sc.pp.calculate_qc_metrics(adata,
+                           qc_vars=["mt", "ribo", "hb"],
+                           inplace=True,
+                           log1p=True)
+
+```
+Lets now generate violin plots for these QC metrics to assess their prominence in our dataset. I am only displaying the results for `'pct_counts_mt'`; however, please note this can be done for all QC metrics by replacing `'pct_counts_mt'` with `'pct_counts_ribo'` or `'pct_counts_hb'`
+
+```python
+sc.pl.violin(
+    adata,
+    ["n_genes_by_counts", "total_counts", "pct_counts_mt"],
+    jitter=0.4,
+    multi_panel=True,
+)
+
+```
+
+![violin-QC-mt](images/violinQCmt.png)
+
+Additionally, we can produce a scatterplot assessing the disribution of mt, ribo and hb genes in our cells. The same is true here - you can replace `'pct_counts_mt'` with `'pct_counts_ribo'` or `'pct_counts_hb'` 
+
+```python
+sc.pl.scatter(adata, "total_counts", "n_genes_by_counts", color="pct_counts_mt")
+```
+![scatter-QC-mt](images/scatterQCmt.png)
+
+Now we have grounds to remove cells that highly express any of these genes. Again, focusing on the scatterplot, we can to eliminate all cells with a high expression of mt, ribo, or hb genes. However, some cells that highly express these genes are likely to represent real biology! As such, scanpy highly recommends that you start with a permissive filtering stratergy. As such, based on my QC plot, I plan to eliminate all cells with less than 100 genes, and all genes that are expressed in less than 5 cells. I can do so by utilizing `'filter_cells'` and `'filter_genes'` like so. 
+
+```python
+sc.pp.filter_cells(adata, min_genes=100)
+sc.pp.filter_genes(adata, min_cells=5)
+```
+
+### Doublet Prediction: scrublet
+
+Another common preprocessing step for single-cell sequencing analysis is removing doublets. Doublets are simply multiple cells that were co-encapsulated in a single bead when preparing the sample for sequencing. These 'cells' therefore must be removed from our analysis. To do so we will utilize the python package [scrublet](https://github.com/swolock/scrublet). Unfortunately, scrublet is fairly computational expensive, as such I must utilize a compute cluster from 'compute canada'. To do so, I must generate a shell script that generates a python enviroment and then runs scrublet on our samples. Thankfully, the scanpy package has a deployable version of scrublet for our purposes. Therefore, we only need to import scanpy for this process. 
+
+```bash
+#!/bin/bash
+#SBATCH --account=account-name
+#SBATCH --job-name=scrublet
+#SBATCH --qos=privileged
+#SBATCH --nodes=1                
+#SBATCH --tasks-per-node=1         
+#SBATCH --mem 50G
+#SBATCH --time 10:00:00
+#SBATCH --output=path/to/output/file/scrublet.%J.out
+#SBATCH --error=path/to/err/file/scrublet.%J.err
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=#
+
+module load StdEnv/2023
+
+#generate python enviroment
+module load python/3.10
+virtualenv --no-download $SLURM_TMPDIR/env
+source $SLURM_TMPDIR/env/bin/activate
+pip install --no-index --upgrade pip
+
+#load scanpy 
+pip install --no-index scanpy
+
+# Run your Python script
+python path/to/scrublet/file/slurm_scrublet.py
+```
+To run scrublet through the scanpy package, we can simply call [sc.external.pp.scrublet](https://scanpy.readthedocs.io/en/1.9.x/generated/scanpy.external.pp.scrublet.html) like so: 
+
+```python
+import scanpy as sc
+import glob
+
+outpath = '/path/to/scrublet/output/dir'
+
+dirpaths = glob('path/to/h5/files/*.h5')
+
+for dirpath in dirpaths:
+    id = dirpath.split('/')[10].split('_')[0]
+    adata = sc.read_10x_h5(dirpath) 
+    sc.external.pp.scrublet(adata, verbose=True)
+    sc.write(f"{outpath}/{id}_scrub.h5", adata)
+
+```
+This will generate a new H5 file with all doublets removed from your sample. You will now need to re-import these files into your working enviroment. This can be done as before: 
+
+```python
+dirpaths = glob('path/to/scrublet/h5/files/*_scrub.h5')
+
+adatas = {dirpath.split('/')[10].split('_')[0]: sc.read_h5ad(dirpath, cache=True) for dirpath in dirpaths}
+adata = ad.concat(adatas.values(), label='sample')
+```
+
+### Normalization
+
+Now that we have a reasonable clean single-cell dataset, we are ready for data normalization. For this, we will normalize the count depth of our gene expression and perform a log transformation. first we must save a copy of our unnormalized gene expression by:
+
+```python
+adata.layers["counts"] = adata.X.copy()
+```
+now we can normalize our counts by the median total counts per cell. This is done through the [sc.pp.normalize_total](https://scanpy.readthedocs.io/en/stable/generated/scanpy.pp.normalize_total.html) function in scanpy. Additionally we can log tranform our data using the [sc.pp.log1p](https://scanpy.readthedocs.io/en/stable/generated/scanpy.pp.log1p.html) function. 
+
+```python
+sc.pp.normalize_total(adata)
+sc.pp.log1p(adata)
+```
+
+### Dimensional Reduction
+
+To reduce the diminsionality of our dataset, a logical first step is to assess the utility of our features, a process called feature selection. For example, a substatial fraction of the genes that will be expressed in your dataset will be uniformly distributed in all cells. These genes, commonly called 'house keeping genes', do not offer any utility in deliniating cell-type, computing trajectories, etc. As such, we are first going to reduce the diminsionality of our dataset by removing uniformly distributed genes. To do so, we will select the most highly variable genes by using the [sc.pp.highly_variable_genes](https://scanpy.readthedocs.io/en/stable/generated/scanpy.pp.highly_variable_genes.html) function. This function computes the dispertion of each genes within your single cell dataset, and returns the top `n` genes withinn your dataset through the `n_top_genes` parameter. We can then plot the selected genes (based on the set cutoff) using sc.pl.highly_variable_genes function.
+
+```python
+sc.pp.highly_variable_genes(adata,
+                            n_top_genes=2500,
+                            batch_key="sample")
+sc.pl.highly_variable_genes(adata)
+```
+![highly-variable-genes](images/highlyvariablegenes.png)
+
+#### Principle Component Analysis
+
+In order to further reduce the diminsionality of our dataset, we should leverage PCA. PCA computes the main axes of variation within our dataset. If you are unfamiliar with PCA analysis, I strongly encourage you to further investigate this proceedure. Here are some great resources:
+
+1. [Greenacre et, al.](https://www.nature.com/articles/s43586-022-00184-w#:~:text=Principal%20component%20analysis%20is%20a,variance%20of%20all%20the%20variables.)
+2. [StatQuest](https://youtu.be/FgakZw6K1QQ?si=iyUOR2jcbUEzC-ah)
+3. [IBM explaination of PCA](https://www.ibm.com/topics/principal-component-analysis)
+
+To perform PCA on our dataset, we will use the [sc.tl.pca](https://scanpy.readthedocs.io/en/1.9.x/generated/scanpy.tl.pca.html) function like so:
+
+```python
+sc.tl.pca(adata)
+```
+
+With our principle components computed the next step is the assess the relative influence each PC has on the total variance in our dataset. This can be done through use of the [sc.pl.pca_variance_ratio](https://scanpy.readthedocs.io/en/stable/api/generated/scanpy.pl.pca_variance_ratio.html) function in scanpy.
+
+```python
+sc.pl.pca_variance_ratio(adata, n_pcs=50, log=True)
+```
+![explain-variance-ratio](images/explainedvarianceratio.png)
+
+It is often stated that the most optimal cut-off for PCA is the 'elbow' of the plot. This is the point at which the addition of an additional PC adds very little varience to our dataset. In my case, this would likely be around PC 18 - 24. However, as the addition of PC 25 - 50 do not heavily negatively impact results (stated by scanpy) there really is very little harm in including all 50 PCs. 
+
+As a quick sanity check we should ensure that our quality control metrics (things like the distribution of MT genes) do not explain the varience in our top PCs. As such, we can plot our MT fraction of Pairs-Plots of the top 8 PCs. 
+
+```python
+sc.pl.pca(
+    adata,
+    color=['sample', 'sample', 'sample', 'sample',
+           'pct_counts_mt', 'pct_counts_mt', 'pct_counts_mt', 'pct_counts_mt'],
+    dimensions=[(0, 1), (2, 3), (4, 5), (6, 7),
+               (0, 1), (2, 3), (4, 5), (6, 7)],
+    ncols=4,
+    size=4,
+)
+```
+
+![PCA-mt](images/PCA-mt.png)
+
+As shown above, there a no dedicated seperate clusters that are fully explained by MT fraction. As such, our QC seems to have worked well! However, in plot 1 (comparing PC1 vs PC2) there seems to be a large degree of seperation between samples (i.e. the varience within our dataset can be partially explained by a 'batch effect'). We will explore this further below!
+
+To assess the degree of 'batch effects' between samples, we will quickly compute the [Nearest Neighbours](https://scanpy.readthedocs.io/en/stable/api/generated/scanpy.pp.neighbors.html) within our PCA representation matrix, and plot the output in 2-dimensions using [UMAP](https://scanpy.readthedocs.io/en/stable/generated/scanpy.tl.umap.html). Both of these functions will be outlined in greater detail after we correct for batch effects (Harmony).
+
+```python
+sc.pp.neighbors(adata)
+sc.tl.umap(adata)
+sc.pl.umap(adata,
+           color="sample",
+           size=2)
+```
+
+![UMAP-batcheffect](images/umap-batch.png)
+
+The above Uniform Manifold Approximation and Projection plot is labeling our samples (colours) and clustering the cells by there transcriptional expression. As you may note in the above image, our samples seem to be clustering independantly! This is a clear sign of 'batch effects'. To correct for this technical error, we will utilize [Harmony](https://github.com/lilab-bcb/harmony-pytorch) to correct for these effects. 
+
+### Harmony Dataset Integration
+
+Harmony is an algorithm developed by [Ilia Korsunsky et, al.](https://www.nature.com/articles/s41592-019-0619-0) that projects cells into a shared embedding in which cells group by cell type rather than dataset-specific conditions. As such, Harmony is an excellent algorithm for removing the technical errors posed by batch effects. This algorithm can also be used to integrate datasets from multiple sources in increase the power of your analysis. 
+
+Unfortunately, As with Scrublet, Harmony is very computationally expensive. As such, as before, I must use compute canada for such analyses. 
+
+to run this script on SLURM you need to send your shell script using sbatch like so
+
+```bash
+sbatch path/to/harmony/shell/script/run_harmony.sh
+```
+
+SLURM shell script.
+```bash
+#!/bin/bash
+#SBATCH --account=account-name
+#SBATCH --job-name=harmony
+#SBATCH --qos=privileged
+#SBATCH --nodes=1                # number of Nodes
+#SBATCH --tasks-per-node=1        # number of MPI processes per node
+#SBATCH --mem 10G
+#SBATCH --time 00:30:00
+#SBATCH --output=path/to/output/file/harmony.%J.out
+#SBATCH --error=path/to/error/file/harmony.%J.err
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=#
+
+module load StdEnv/2023
+
+module load python/3.11
+virtualenv --no-download $SLURM_TMPDIR/env
+source $SLURM_TMPDIR/env/bin/activate
+pip install --no-index --upgrade pip
+
+pip install --no-index harmony_pytorch
+pip install --no-index scanpy
+
+python path/to/harmony/python/file/slurm_harmony.py
+```
+SLURM python script 
+
+```python
+import scanpy as sc
+from harmony import harmonize
+
+
+adata = sc.read_h5ad('/home/garvena/projects/def-dmberman/garvena/singlecellseq/Data/Harmony/Lai/Input/input_harmony.h5ad')
+Z = harmonize(adata.obsm['X_pca'], adata.obs, batch_key = 'sample')
+adata.obsm['X_harmony'] = Z
+
+sc.write("/home/garvena/projects/def-dmberman/garvena/singlecellseq/Data/Harmony/Lai/output/output_harmony.h5ad", adata)
+```
