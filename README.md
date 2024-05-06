@@ -684,3 +684,17 @@ adata.obsm['X_harmony'] = Z
 
 sc.write("/home/garvena/projects/def-dmberman/garvena/singlecellseq/Data/Harmony/Lai/output/output_harmony.h5ad", adata)
 ```
+I will now recalculate the Nearest Neighbours, and UMAP as before: 
+
+```python 
+sc.pp.neighbors(adata, use_rep='X_harmony')
+sc.tl.umap(adata)
+sc.pl.umap(
+    adata,
+    color="sample",
+    size=2,
+)
+```
+
+![harmonized-umap](images/harmonized-UMAP.png)
+
